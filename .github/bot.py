@@ -10,7 +10,6 @@ API_HASH = "d524b414d21f4d37f08684c1df41ac9c"
 
 BETTER_NET = os.environ.get("BETTER_NET")
 REKERNEL = os.environ.get("REKERNEL")
-KERNEL = os.environ.get("KERNEL")
 KERNELSU = os.environ.get("KERNELSU")
 BBG = os.environ.get("BBG")
 LXC = os.environ.get("LXC")
@@ -26,7 +25,6 @@ RUN_URL = os.environ.get("RUN_URL")
 BOT_CI_SESSION = os.environ.get("BOT_CI_SESSION")
 MSG_TEMPLATE = """
 ```
-kernel source: {kernel}
 root impl: {kernelsu}
 ssg io: {ssg}
 stock config: {stock_config}
@@ -43,7 +41,6 @@ more ZRAM: {zram}
 
 def get_caption():
     msg = MSG_TEMPLATE.format(
-        kernel=KERNEL,
         kernelsu=KERNELSU,
         ssg=SSG,
         stock_config=STOCK_CONFIG,

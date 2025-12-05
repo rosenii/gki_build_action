@@ -1,5 +1,4 @@
 {
-  "kernel": "esk",
   "kernelsu": "disable",
   "better_net": "false",
   "zram": "false",

@@ -296,7 +296,15 @@ jobs:
               patch -p1 -F 3 < config.patch || true
             fi
           fi
-
+      - name: 添加制作名称
+        run: |
+          cd kernel_workspace
+          echo "替换内核版本后缀..."
+          echo "当前内核版本后缀：${{ env.KERNEL_NAME }}"
+          for f in ./common/scripts/setlocalversion; do
+            sed -i "\$s|echo \"\\\$res\"|echo \"-${{ env.KERNEL_NAME }}\"|" "$f"
+          done
+           
       - name: 启用内核级基带保护
         run: |
           if [[ "${{ env.BBG }}" == "true" ]]; then

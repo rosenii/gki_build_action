@@ -5,6 +5,7 @@ env:
   ANDROID_VERSION: 'android12'
   KERNEL_VERSION: '5.10'
   KERNEL_NAME: 'localhost@rosenii'
+  KERNEL_BRANCH: 'android12-5.10-2025-12'
 
 on:
   workflow_dispatch:
@@ -89,7 +90,7 @@ jobs:
           mkdir -p kernel_workspace
           cd kernel_workspace
           echo "正在克隆源码仓库..."
-          git clone --depth=1 https://android.googlesource.com/kernel/common -b android12-5.10-2025-09 common 
+          git clone --depth=1 https://android.googlesource.com/kernel/common -b ${{ env.KERNEL_BRANCH }} common 
           echo "正在克隆llvm-Clang20工具链..." &&
           mkdir -p clang20 &&
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang20-r547379/clang-r547379.zip -o clang.zip &&

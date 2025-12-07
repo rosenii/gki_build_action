@@ -88,12 +88,13 @@ jobs:
         run: |
           mkdir -p kernel_workspace
           cd kernel_workspace
-          echo "正在克隆源码仓库..."
-          aria2c -s16 -x16 -k1M https://github.com/Tools-cx-app/android12-5.10-gki/archive/refs/heads/main.zip -o common.zip && 
-          unzip -q common.zip && 
-          mv "android12-5.10-gki-main" common &&
-          rm -rf common.zip &
-
+          echo "正在克隆源码仓库..."  
+          aria2c -s16 -x16 -k1M https://android.googlesource.com/kernel/common/+archive/refs/heads/android12-5.10-2025-09.tar.gz -o common.tar.gz && 
+          dir_name=$(tar -tf common.tar.gz | head -1 | cut -f1 -d"/") && 
+          tar -xf common.tar.gz && 
+          mv "$dir_name" common && 
+          rm -rf common.tar.gz &
+          
           echo "正在克隆llvm-Clang20工具链..." &&
           mkdir -p clang20 &&
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang20-r547379/clang-r547379.zip -o clang.zip &&

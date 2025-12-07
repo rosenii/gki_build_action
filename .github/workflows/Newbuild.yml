@@ -1,0 +1,440 @@
+name: 构建
+
+env:
+  TZ: Asia/Shanghai
+  ANDROID_VERSION: 'android12'
+  KERNEL_VERSION: '5.10'
+  KERNEL_NAME: 'localhost@rosenii'
+
+on:
+  workflow_dispatch:
+
+jobs:
+  read:
+    name: Parse *.config.json
+    runs-on: ubuntu-latest
+    outputs:
+      CONFIGS: ${{ steps.generate-matrix.outputs.CONFIGS }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Generate Matrix
+        id: generate-matrix
+        run: |
+          echo "CONFIGS<<EOF" >> $GITHUB_OUTPUT
+          jq -s '[.[]]' configs/*.config.json >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+  build:
+    runs-on: ubuntu-latest
+    needs:
+      - read
+    strategy:
+      max-parallel: 4
+      fail-fast: false
+      matrix:
+        CONFIG: ${{ fromJSON(needs.read.outputs.CONFIGS) }}
+    env:
+      KERNELSU: ${{ matrix.CONFIG.kernelsu }}
+      REKERNEL: ${{ matrix.CONFIG.rekernel_enable }}
+      STOCK_CONFIG: ${{ matrix.CONFIG.stock_config }}
+      LXC: ${{ matrix.CONFIG.lxc_enable }}
+      SSG: ${{ matrix.CONFIG.ssg }}
+      BBG: ${{ matrix.CONFIG.baseband_guard }}
+      BETTER_NET: ${{ matrix.CONFIG.better_net }}
+      SUSFS: ${{ matrix.CONFIG.susfs }}
+      ZRAM: ${{ matrix.CONFIG.zram }}
+      KEY: ${{ matrix.CONFIG.key }}
+    steps:
+      - name: 安装配置环境依赖
+        run: |
+          sudo apt-mark hold firefox
+          sudo apt-mark hold libc-bin
+          sudo apt purge man-db
+          sudo rm -rf /var/lib/man-db/auto-update
+          sudo apt update
+          sudo apt-get install -y --no-install-recommends \
+            curl bison flex make binutils git perl gcc python3 \
+            python-is-python3 bc libssl-dev libelf-dev \
+            bc aria2 zip unzip ccache binutils-aarch64-linux-gnu
+
+      - name: 准备 ccache 目录变量
+        run: |
+          CCACHE_DIR="$HOME/.ccache_${{ env.KERNEL_VERSION }}"
+          mkdir -p "$CCACHE_DIR"
+          echo "CCACHE_DIR=$CCACHE_DIR" >> $GITHUB_ENV
+          echo "CCACHE_BASEDIR=${GITHUB_WORKSPACE}" >> $GITHUB_ENV
+
+      - name: 载入当前版本内核的 ccache缓存
+        uses: actions/cache@v4
+        id: ccache-restore
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-esk-${{ env.KERNEL_VERSION }}-${{ env.KEY }}
+          restore-keys: |
+            ccache-esk-${{ env.KERNEL_VERSION }}-${{ env.KEY }}
+            ccache-esk--
+
+      - name: 初始化并配置 ccache
+        run: |
+          ccache --set-config=cache_dir=${{ env.CCACHE_DIR }}
+          ccache --set-config=max_size=5G
+          ccache --set-config=sloppiness=time_macros,include_file_ctime,include_file_mtime,file_stat_matches
+          ccache --set-config=hash_dir=false
+          ccache -s
+
+      - name: 初始化源码仓库及llvm-Clang20工具链
+        run: |
+          mkdir -p kernel_workspace
+          cd kernel_workspace
+          echo "正在克隆源码仓库..."
+          aria2c -s16 -x16 -k1M https://github.com/Tools-cx-app/android12-5.10-gki/archive/refs/heads/main.zip -o common.zip && 
+          unzip -q common.zip && 
+          mv "android12-5.10-gki-main" common &&
+          rm -rf common.zip &
+
+          echo "正在克隆llvm-Clang20工具链..." &&
+          mkdir -p clang20 &&
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang20-r547379/clang-r547379.zip -o clang.zip &&
+          unzip -q clang.zip -d clang20 &&
+          rm -rf clang.zip &
+          
+          echo "正在克隆构建工具..." &&
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang20-r547379/build-tools.zip -o build-tools.zip &&
+          unzip -q build-tools.zip &&
+          rm -rf build-tools.zip &
+          
+          wait
+          echo "所有源码及llvm-Clang20工具链初始化完成！"
+          echo "正在去除 ABI 保护 & 去除 dirty 后缀..."
+          rm common/android/abi_gki_protected_exports_* || true
+          for f in common/scripts/setlocalversion; do
+            sed -i 's/ -dirty//g' "$f"
+            sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' "$f"
+          done
+
+      - name: 添加KernelSU
+        id: ksu_version
+        run: |
+          # 进入内核工作目录
+          cd kernel_workspace
+          if [[ "${{ env.KERNELSU }}" == "disable" ]]; then
+            exit
+          fi
+          if [[ "${{ env.SUSFS }}" == "true" ]]; then
+            if [[ "${{ env.KERNELSU }}" == "rksu" ]]; then
+              curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s susfs-main
+            elif [[ "${{ env.KERNELSU }}" == "sukisu" ]]; then
+              curl -LSs "https://github.com/SukiSU-Ultra/SukiSU-Ultra/raw/main/kernel/setup.sh" | bash -s builtin
+            fi
+          else
+            if [[ "${{ env.KERNELSU }}" == "rksu" ]]; then
+              curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s main
+            elif [[ "${{ env.KERNELSU }}" == "sukisu" ]]; then
+              curl -LSs "https://github.com/SukiSU-Ultra/SukiSU-Ultra/raw/main/kernel/setup.sh" | bash -s builtin
+            fi
+          fi
+
+      - name: 应用 KernelSU & SUSFS 补丁
+        run: |
+          cd kernel_workspace
+          if [[ "${{ env.KERNELSU }}" == "disable" ]]; then
+            exit
+          fi
+          git clone https://github.com/ShirkNeko/SukiSU_patch.git
+          
+          if [[ "${{ env.SUSFS }}" == "true" ]]; then
+            git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch ./common/
+            cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
+            cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+          else
+            cp ./SukiSU_patch/hooks/scope_min_manual_hooks_v1.6.patch ./common/
+          fi
+          
+
+          cp ./SukiSU_patch/69_hide_stuff.patch ./common/
+          
+          cd ./common
+          
+          if [[ "${{ env.SUSFS }}" == "true" ]]; then
+            patch -p1 --fuzz=3 < 50_add_susfs_in_gki-android12-5.10.patch || true
+          else
+            patch -p1 < scope_min_manual_hooks_v1.6.patch || true
+          fi
+          
+          patch -p1 69_hide_stuff.patch || true
+
+      - name: 启用stock config
+        run: |
+          if [[ "${{ env.STOCK_CONFIG }}" == "true" ]]; then
+            cd kernel_workspace/common
+            echo "下载相关文件"
+            curl -LSs https://raw.githubusercontent.com/Tools-cx-app/gki_build_action/main/patches/stock_config.patch -o stock_config.patch
+            patch -p1 --fuzz=3 < stock_config.patch
+          fi
+
+      - name: 添加lz4k / lz4kd 等zram压缩算法
+        run: |
+          if [[ "${{ env.ZRAM }}" == "true" ]]; then
+            cd kernel_workspace
+            git clone https://github.com/ShirkNeko/SukiSU_patch.git
+            cp -r ./SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux/
+            mkdir -p ./common/lib/lz4k
+            mkdir -p ./common/lib/lz4kd
+            cp -r ./SukiSU_patch/other/zram/lz4k/lib/lz4k/* ./common/lib/lz4k/
+            cp -r ./SukiSU_patch/other/zram/lz4k/lib/lz4kd/* ./common/lib/lz4kd/
+            mkdir -p ./common/crypto
+            cp -r ./SukiSU_patch/other/zram/lz4k/crypto/* ./common/crypto/
+            cp ./SukiSU_patch/other/zram/zram_patch/5.10/lz4kd.patch ./common
+            echo "正在打补丁（仅 lz4kd）"
+            cd common
+            patch -p1 -F 3 < lz4kd.patch
+            echo '完成补丁'
+          fi
+      - name: 添加Re:Kernel
+        run: |
+          if [[ "${{ env.REKERNEL }}" == "true" ]]; then
+            echo "CONFIG_REKERNEL=y" >> "kernel_workspace/common/arch/arm64/configs/gki_defconfig"
+            echo "CONFIG_REKERNEL_NETWORK=y" >> "kernel_workspace/common/arch/arm64/configs/gki_defconfig"
+          fi
+          
+
+      - name: 添加SSG IO调速器
+        run: |
+          if [[ "${{ env.SSG }}" == "true" ]]; then
+            echo "正在启用三星SSG IO调度器"
+            cd kernel_workspace
+            echo "CONFIG_MQ_IOSCHED_SSG=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_MQ_IOSCHED_SSG_CGROUP=y" >> ./common/arch/arm64/configs/gki_defconfig
+          fi
+          
+      - name: 添加lxc
+        run: |
+          if [[ "${{ env.LXC }}" == "true" ]]; then
+            cd kernel_workspace/common
+            echo "下载相关文件"
+            curl -LSs https://raw.githubusercontent.com/Tools-cx-app/gki_build_action/main/patches/lxc.patch -o lxc.patch
+            echo "开始patch"
+            if [ -e "drivers/gpu/mediatek/mali-valhall/gpu/arm/midgard/context/mali_kbase_context.c" ]; then
+              patch -p1 --forward --fuzz=3 < lxc.patch
+            else
+              sed -i '/^diff --git.*mali_kbase_context\.c$/,/^diff --git/{
+                /^diff --git/!d
+              }'  lxc.patch
+              patch -p1 --forward --fuzz=3 < lxc.patch
+            fi
+          fi
+          
+      - name: 添加 KSU & SUSFS 配置项
+        run: |
+          cd kernel_workspace
+          if [[ "${{ env.KERNELSU }}" == "disable" ]]; then
+            exit
+          fi
+          echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "正在开启manual钩子..."
+          echo "CONFIG_KSU_MANUAL_HOOK=y" >> ./common/arch/arm64/configs/gki_defconfig
+          if [[ "${{ env.SUSFS }}" == "true" ]]; then
+            echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> ./common/arch/arm64/configs/gki_defconfig
+          fi
+          #添加对 Mountify (backslashxx/mountify) 模块的支持
+          echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
+          # 开启O2编译优化配置
+          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
+          #禁用 defconfig 检查
+          sed -i 's/check_defconfig//' ./common/build.config.gki
+          
+      - name: 启用网络功能增强优化配置
+        run: |
+          cd kernel_workspace
+          if [[ "${{ env.BETTER_NET }}" == "true" ]]; then
+            #启用  BPF 流解析器,实现高性能网络流量处理,增强网络监控和分析能力
+            echo "CONFIG_BPF_STREAM_PARSER=y" >> ./common/arch/arm64/configs/gki_defconfig
+            #开启增强 Netfilter 防火墙扩展模块,支持基于地址类型的匹配规则,启用 IP 集合支持,提高防火墙规则灵活性,支持更复杂的流量过滤策略
+            echo "CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_NETFILTER_XT_SET=y" >> ./common/arch/arm64/configs/gki_defconfig
+            #启用 IP 集框架及其多种数据结构实现,提供高效的大规模 IP 地址管理,提高防火墙规则处理效率,减少内存占用
+            echo "CONFIG_IP_SET=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_MAX=65534" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_BITMAP_IP=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_BITMAP_IPMAC=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_BITMAP_PORT=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_HASH_IP=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_HASH_IPMARK=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_HASH_IPPORT=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_HASH_IPPORTIP=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_HASH_IPPORTNET=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_HASH_IPMAC=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_HASH_MAC=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_HASH_NETPORTNET=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_HASH_NET=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_HASH_NETNET=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_HASH_NETPORT=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_HASH_NETIFACE=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP_SET_LIST_SET=y" >> ./common/arch/arm64/configs/gki_defconfig
+            #启用 IPv6 网络地址转换
+            echo "CONFIG_IP6_NF_NAT=y" >> ./common/arch/arm64/configs/gki_defconfig
+            echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> ./common/arch/arm64/configs/gki_defconfig
+            #由于部分机型的vintf兼容性检测规则，在开启CONFIG_IP6_NF_NAT后开机会出现"您的设备内部出现了问题。请联系您的设备制造商了解详情。"的提示，故添加一个配置修复补丁，在编译内核时隐藏CONFIG_IP6_NF_NAT=y但不影响对应功能编译
+            if [[ "${{ env.STOCK_CONFIG }}" != "true" ]]; then
+              cd common
+              wget https://github.com/cctv18/oppo_oplus_realme_sm8650/raw/refs/heads/main/other_patch/config.patch
+              patch -p1 -F 3 < config.patch || true
+            fi
+          fi
+
+      - name: 启用内核级基带保护
+        run: |
+          if [[ "${{ env.BBG }}" == "true" ]]; then
+            echo "正在启用启用内核级基带保护支持…"
+            cd kernel_workspace
+            echo "CONFIG_BBG=y" >> ./common/arch/arm64/configs/gki_defconfig
+            cd ./common/
+            curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash -s dev
+            sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' security/Kconfig
+          fi
+           
+      - name: 构建内核
+        run: |
+          WORKDIR="$(pwd)"
+          export PATH="/usr/lib/ccache:$PATH"
+          export PATH="$WORKDIR/kernel_workspace/clang20/bin:$PATH"
+          export PATH="$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
+          CLANG_DIR="$WORKDIR/kernel_workspace/clang20/bin"
+          CLANG_VERSION="$($CLANG_DIR/clang --version | head -n 1)"
+          LLD_VERSION="$($CLANG_DIR/ld.lld --version | head -n 1)"
+          echo "编译器信息:"
+          echo "Clang版本: $CLANG_VERSION"
+          echo "LLD版本: $LLD_VERSION"
+          pahole_version=$(pahole --version 2>/dev/null | head -n1); [ -z "$pahole_version" ] && echo "pahole版本：未安装" || echo "pahole版本：$pahole_version"
+
+          export CCACHE_LOGFILE='${{ github.workspace }}/kernel_workspace/ccache.log'
+          export CCACHE_COMPILERCHECK="none"
+          export CCACHE_BASEDIR="${{ github.workspace }}"
+          export CCACHE_NOHASHDIR="true"
+          export CCACHE_HARDLINK="true"
+          export CCACHE_DIR="${{ env.CCACHE_DIR }}"
+          export CCACHE_MAXSIZE="3G"
+
+          cd kernel_workspace/common
+          wget https://github.com/cctv18/libfakestat/releases/latest/download/libfakestat.tar.gz
+          wget https://github.com/cctv18/oppo_oplus_realme_sm8750/raw/refs/heads/main/lib/libfaketimeMT.so
+          tar -xf libfakestat.tar.gz
+          chmod 777 ./*.so
+          rm libfakestat.tar.gz
+          export FAKESTAT="2025-05-25 12:00:00"
+          export FAKETIME="@2025-05-25 13:00:00"
+          echo "FAKESTAT=$FAKESTAT" >> $GITHUB_ENV
+          echo "FAKETIME=$FAKETIME" >> $GITHUB_ENV
+          SO_DIR=$(pwd)
+          export PRELOAD_LIBS="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
+          #创建 CC (编译器) 包装器
+          echo '#!/bin/bash' > cc-wrapper
+          echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> cc-wrapper
+          echo 'export FAKESTAT="'$FAKESTAT'"' >> cc-wrapper
+          echo 'export FAKETIME="'$FAKETIME'"' >> cc-wrapper
+          echo 'ccache clang "$@"' >> cc-wrapper
+          #创建 LD (链接器) 包装器
+          echo '#!/bin/bash' > ld-wrapper
+          echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> ld-wrapper
+          echo 'export FAKESTAT="'$FAKESTAT'"' >> ld-wrapper
+          echo 'export FAKETIME="'$FAKETIME'"' >> ld-wrapper
+          echo 'ld.lld "$@"' >> ld-wrapper
+          
+          # 测试时间劫持测试是否正常工作
+          echo "--- [Wrapper Test] 正在创建通用的时间劫持测试脚本 ---"
+          echo '#!/bin/bash' > test-wrapper.sh
+          echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> test-wrapper.sh
+          echo 'export FAKESTAT="'$FAKESTAT'"' >> test-wrapper.sh
+          echo 'export FAKETIME="'$FAKETIME'"' >> test-wrapper.sh
+          echo 'echo ">>> Wrapper 内部环境检查完毕."' >> test-wrapper.sh
+          echo 'exec "$@"' >> test-wrapper.sh # 执行所有传入的参数
+          chmod +x test-wrapper.sh
+          echo "--- [Wrapper Test] 正在测试 (date) 命令 ---"
+          ./test-wrapper.sh date
+          echo "--- [Wrapper Test] 正在测试 (stat) 命令 ---"
+          ./test-wrapper.sh stat ./Makefile
+          echo "--- [Wrapper Test] 测试完毕 ---"
+          chmod +x cc-wrapper ld-wrapper
+          echo "--- 编译前环境时间: $(LD_PRELOAD=$PRELOAD_LIBS date) ---"
+          echo "--- 编译前环境文件时间戳: ---"
+          LD_PRELOAD=$PRELOAD_LIBS stat ./Makefile
+          
+          #在构建内核的同时清除不必要的.NET, Android NDK, Haskell, CodeQL运行库，清理空间且不阻塞后续步骤运行
+          sudo rm -rf /usr/share/dotnet &
+          sudo rm -rf /usr/local/lib/android &
+          sudo rm -rf /opt/ghc &
+          sudo rm -rf /opt/hostedtoolcache/CodeQL &
+          #删除-fno-integrated-as强制检查
+          sed -i 's/-fno-integrated-as//' scripts/Kconfig.include
+          
+          #make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD=ld.lld HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig Image
+          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="ccache clang" LD="ld.lld" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error gki_defconfig &&
+          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" HOSTLD=ld.lld O=out KCFLAGS+=-O2 KCFLAGS+=-Wno-error Image
+
+          echo "内核编译完成！"
+          echo "ccache状态："
+          ccache -s
+          echo "编译后空间:"
+          df -h
+         
+          
+      - name: 克隆 AnyKernel3 并打包
+        run: |
+          cd kernel_workspace
+          git clone https://github.com/Tools-cx-app/AnyKernel3.git --depth=1
+          rm -rf ./AnyKernel3/.git
+          cd AnyKernel3
+          cp ../common/out/arch/arm64/boot/Image ./Image
+          if [[ ! -f ./Image ]]; then
+            echo "未找到内核镜像文件，构建可能出错"
+            exit 1
+          fi
+          zip -r ../${{ env.KEY }}.zip ./*
+
+      - name: 上传到 Telegram
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          BOT_CI_SESSION: ${{ secrets.BOT_CI_SESSION }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          KERNELSU: ${{ env.KERNELSU }}
+          SSG: ${{ env.SSG }}
+          REKERNEL: ${{ env.REKERNEL }}
+          STOCK_CONFIG: ${{ env.STOCK_CONFIG }}
+          LXC: ${{ env.LXC }}
+          BBG: ${{ env.BBG }}
+          BETTER_NET: ${{ env.BETTER_NET }}
+          SUSFS: ${{ env.SUSFS }}
+          ZRAM: ${{ env.ZRAM }}
+        run: |
+          if [ -z ${{ secrets.BOT_TOKEN }} ]; then
+            exit 0
+          fi
+          cd ${{ github.workspace }}
+          pip3 install telethon
+          curl -LSOs https://github.com/Tools-cx-app/gki_build_action/raw/main/.github/bot.py
+          python3 bot.py ./kernel_workspace/${{ env.KEY }}.zip
+
+      - name: 上传 ZIP 工件
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.KEY }}
+          path: ${{ github.workspace }}/kernel_workspace/*.zip

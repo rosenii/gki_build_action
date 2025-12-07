@@ -1,7 +1,7 @@
 {
   "kernelsu": "disable",
   "better_net": "false",
-  "zram": "false",
+  "zram": "true",
   "rekernel_enable": "true",
   "susfs": "false",
   "ssg": "false",

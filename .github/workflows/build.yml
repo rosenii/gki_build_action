@@ -415,32 +415,27 @@ jobs:
           fi
           zip -r ../${{ env.KEY }}.zip ./*
 
-      - name: 上传到 Telegram
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-          BOT_CI_SESSION: ${{ secrets.BOT_CI_SESSION }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          KERNELSU: ${{ env.KERNELSU }}
-          SSG: ${{ env.SSG }}
-          REKERNEL: ${{ env.REKERNEL }}
-          STOCK_CONFIG: ${{ env.STOCK_CONFIG }}
-          LXC: ${{ env.LXC }}
-          BBG: ${{ env.BBG }}
-          BETTER_NET: ${{ env.BETTER_NET }}
-          SUSFS: ${{ env.SUSFS }}
-          ZRAM: ${{ env.ZRAM }}
-        run: |
-          if [ -z ${{ secrets.BOT_TOKEN }} ]; then
-            exit 0
-          fi
-          cd ${{ github.workspace }}
-          pip3 install telethon
-          curl -LSOs https://github.com/Tools-cx-app/gki_build_action/raw/main/.github/bot.py
-          python3 bot.py ./kernel_workspace/${{ env.KEY }}.zip
-
       - name: 上传 ZIP 工件
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.KEY }}
           path: ${{ github.workspace }}/kernel_workspace/*.zip
+      - name: 推送到 Telegram
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          KEY: ${{ env.KEY }}
+        run: |
+          FILE="kernel_workspace/${KEY}.zip"
+
+          if [[ ! -f "$FILE" ]]; then
+            echo "❌ 未找到构建文件: $FILE"
+            ls -lah kernel_workspace
+            exit 1
+          fi
+
+          echo "📤 正在上传 $FILE 到 Telegram..."
+
+          curl -F document=@"$FILE" \
+               -F caption="✅ CI 构建成功：${KEY}.zip" \
+               "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument?chat_id=${CHAT_ID}"

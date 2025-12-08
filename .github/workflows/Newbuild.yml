@@ -429,5 +429,5 @@ jobs:
           echo "📤 正在上传 $FILE 到 Telegram..."
 
           curl -F document=@"$FILE" \
-               -F caption="✅ CI 构建成功：${KEY}.zip" \
+               -F caption="✅NewBuild CI 构建成功：${KEY}.zip" \
                "https://api.telegram.org/bot${BOT_TOKEN}/sendDocument?chat_id=${CHAT_ID}"

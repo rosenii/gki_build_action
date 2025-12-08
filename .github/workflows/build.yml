@@ -140,7 +140,7 @@ jobs:
       - name: 应用 KernelSU & SUSFS 补丁
         run: |
           cd kernel_workspace
-          if [[ "${{ env.KERNELSU }}" == "disable" ]]; then
+          if [[ "${{ env.KERNELSU }}" == "disable"|| "${{ env.KERNELSU }}" == "ksu" ]]; then
             exit
           fi
           git clone https://github.com/ShirkNeko/SukiSU_patch.git
@@ -228,7 +228,7 @@ jobs:
       - name: 添加 KSU & SUSFS 配置项
         run: |
           cd kernel_workspace
-          if [[ "${{ env.KERNELSU }}" == "disable" ]]; then
+          if [[ "${{ env.KERNELSU }}" == "disable"]]; then
             exit
           fi
           echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig

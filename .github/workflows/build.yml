@@ -140,7 +140,7 @@ jobs:
       - name: 应用 KernelSU & SUSFS 补丁
         run: |
           cd kernel_workspace
-          if [[ "${{ env.KERNELSU }}" == "disable"|| "${{ env.KERNELSU }}" == "ksu" ]]; then
+          if [[ "${{ env.KERNELSU }}" == "disable" || "${{ env.KERNELSU }}" == "ksu" ]]; then
             exit
           fi
           git clone https://github.com/ShirkNeko/SukiSU_patch.git

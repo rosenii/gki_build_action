@@ -128,6 +128,8 @@ jobs:
           else
             if [[ "${{ env.KERNELSU }}" == "rksu" ]]; then
               curl -LSs "https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh" | bash -s main
+            if [[ "${{ env.KERNELSU }}" == "ksu" ]]; then
+              curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
             elif [[ "${{ env.KERNELSU }}" == "sukisu" ]]; then
               curl -LSs "https://github.com/SukiSU-Ultra/SukiSU-Ultra/raw/main/kernel/setup.sh" | bash -s builtin
             fi

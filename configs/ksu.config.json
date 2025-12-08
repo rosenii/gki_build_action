@@ -1,12 +1,12 @@
 {
-  "kernelsu": "rksu",
+  "kernelsu": "ksu",
   "better_net": "true",
   "zram": "true",
   "rekernel_enable": "true",
-  "susfs": "true",
-  "ssg": "true",
+  "susfs": "false",
+  "ssg": "false",
   "lxc_enable": "false",
   "stock_config": "false",
   "baseband_guard": "true",
-  "key": "ak3-5.10_esk_rksu_susfs"
+  "key": "ak3-5.10-lts-ksu"
 }

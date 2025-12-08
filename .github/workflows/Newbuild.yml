@@ -176,7 +176,7 @@ jobs:
         run: |
           if [[ "${{ env.ZRAM }}" == "true" ]]; then
             cd kernel_workspace
-            git clone https://github.com/ShirkNeko/SukiSU_patch.git
+            echo "git clone https://github.com/ShirkNeko/SukiSU_patch.git"
             cp -r ./SukiSU_patch/other/zram/lz4k/include/linux/* ./common/include/linux/
             mkdir -p ./common/lib/lz4k
             mkdir -p ./common/lib/lz4kd

@@ -7,6 +7,6 @@
   "ssg": "false",
   "lxc_enable": "false",
   "stock_config": "false",
-  "baseband_guard": "false",
+  "baseband_guard": "true",
   "key": "ak3-5.10_esk"
 }

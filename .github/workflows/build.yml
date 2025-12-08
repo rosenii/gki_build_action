@@ -307,7 +307,14 @@ jobs:
             curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash -s dev
             sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' security/Kconfig
           fi
-
+      - name: 添加制作名称
+        run: |
+          cd kernel_workspace
+          echo "替换内核版本后缀..."
+          echo "当前内核版本后缀：${{ env.KERNEL_NAME }}"
+          for f in ./common/scripts/setlocalversion; do
+            sed -i "\$s|echo \"\\\$res\"|echo \"-${{ env.KERNEL_NAME }}\"|" "$f"
+          done
 
       - name: 构建内核
         run: |

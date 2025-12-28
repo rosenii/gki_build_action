@@ -5,7 +5,7 @@ env:
   ANDROID_VERSION: 'android12'
   KERNEL_VERSION: '5.10'
   KERNEL_NAME: 'localhost@rosenii'
-  KERNEL_BRANCH: 'android12-5.10-2025-12'
+  KERNEL_BRANCH: 'android12-5.10-lts'
 
 on:
   workflow_dispatch:

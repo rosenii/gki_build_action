@@ -1,7 +1,7 @@
 {
   "kernelsu": "sukisu",
   "better_net": "false",
-  "zram": "false",
+  "zram": "true",
   "rekernel_enable": "false",
   "susfs": "true",
   "ssg": "true",

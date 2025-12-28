@@ -1,12 +1,12 @@
 {
   "kernelsu": "disable",
   "better_net": "false",
-  "zram": "true",
+  "zram": "false",
   "rekernel_enable": "false",
   "susfs": "false",
   "ssg": "false",
   "lxc_enable": "false",
   "stock_config": "false",
-  "baseband_guard": "true",
-  "key": "ak3-5.10-RClts"
+  "baseband_guard": "false",
+  "key": "ak3-5.10-lts"
 }
